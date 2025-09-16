@@ -49,6 +49,72 @@ Please check the [Setting up a production environment](docs/others/self-hosting/
 > WorkAdventure also provides a [hosted version](https://workadventu.re/?utm_source=github) of the application. Using the hosted version is
 > the easiest way to get started and helps us to keep the project alive.
 
+### AWS EC2 quickstart (Docker Compose)
+
+The steps below summarize how to bootstrap a production-grade WorkAdventure instance on an Ubuntu-based AWS EC2
+instance using Docker Compose, alongside the more detailed [self-hosting documentation](docs/others/self-hosting/install.md)
+and [Docker deployment guide](contrib/docker/README.md).
+
+1. **Prepare your AWS infrastructure**
+   - Allocate a domain name (for example, `wa.example.com`) and create an A record in Route 53 or your DNS provider that points to the EC2 instance's Elastic IP. WorkAdventure issues HTTPS certificates automatically via Let's Encrypt, so the hostname must be reachable on ports 80 and 443.【F:contrib/docker/README.md†L12-L24】【F:contrib/docker/README.md†L42-L53】
+   - Plan additional DNS records for your Jitsi and Coturn servers if you self-host real-time services, as WorkAdventure expects them to live on their own hostnames.【F:docs/others/self-hosting/install.md†L31-L57】
+   - Create (or update) the instance security group to allow inbound TCP 22 (SSH), 80 (HTTP), and 443 (HTTPS). Open the ports required by your Coturn/Jitsi stack as well (for example, UDP/TCP 3478 for Coturn).
+
+2. **Launch the EC2 host**
+   - Start an Ubuntu 22.04 LTS (Jammy) instance with at least 2 vCPUs and 4 GiB RAM (for example, the `t3a.medium` family). This sizing aligns with the reference architecture for roughly 300 concurrent users; adjust according to your usage and video infrastructure.【F:contrib/docker/README.md†L16-L23】
+   - Attach an Elastic IP so your DNS record stays stable across reboots.
+
+3. **Install Docker Engine, the Compose plugin, and supporting tools**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y ca-certificates curl gnupg git
+   sudo install -m 0755 -d /etc/apt/keyrings
+   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+   echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+     \$(. /etc/os-release && echo \$VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+   sudo apt-get update
+   sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   sudo systemctl enable docker
+   sudo usermod -aG docker $USER
+   newgrp docker
+   ```
+   - Reconnect your SSH session if you skip the `newgrp` command so the Docker group membership applies.
+
+4. **Download the deployment files**
+   ```bash
+   git clone https://github.com/thecodingmachine/workadventure.git
+   cd workadventure/contrib/docker
+   cp .env.prod.template .env
+   cp docker-compose.prod.yaml docker-compose.yaml
+   ```
+   Keeping the deployment in `/opt/workadventure` or another dedicated directory helps with backups and upgrades.
+
+5. **Configure `.env` for production**
+   - Generate a long random secret and set `SECRET_KEY`, for example: `openssl rand -hex 32`.
+   - Set `DOMAIN` to the hostname you mapped in DNS and provide an email in `ACME_EMAIL` so Let's Encrypt can issue certificate expiry notices.【F:contrib/docker/README.md†L42-L53】【F:contrib/docker/.env.prod.template†L15-L20】【F:contrib/docker/.env.prod.template†L98-L104】
+   - Choose a released WorkAdventure version (for example, `v1.15.3`) and assign it to `VERSION` so your compose file stays in sync with the container images.【F:contrib/docker/README.md†L55-L79】
+   - Define credentials for the map storage service (`MAP_STORAGE_AUTHENTICATION_USER` and `MAP_STORAGE_AUTHENTICATION_PASSWORD`) and any other options relevant to your setup (Jitsi, Coturn, OpenID, Matrix, etc.).
+   - Review the rest of the variables in `.env` and update them to reflect your infrastructure choices, especially if you run external Jitsi, Coturn, or Matrix services.【F:contrib/docker/.env.prod.template†L34-L152】
+
+6. **Start WorkAdventure**
+   ```bash
+   docker compose up -d
+   docker compose ps
+   docker compose logs -f
+   ```
+   - Confirm every container is healthy before proceeding. Traefik will automatically request and renew TLS certificates for the configured domain.【F:contrib/docker/README.md†L80-L109】【F:contrib/docker/README.md†L200-L210】
+
+7. **Upload your first map**
+   - Build or download a map using the [map starter kit](https://github.com/workadventure/map-starter-kit), then follow the [map upload guide](https://docs.workadventu.re/map-building/tiled-editor/publish/wa-hosted) to publish it.
+   - Visit `https://<your-domain>/map-storage/` in a browser, authenticate with the credentials you configured, and verify your map is listed.【F:contrib/docker/README.md†L110-L135】
+
+8. **Plan your next steps**
+   - Configure Jitsi and Coturn so larger groups and restrictive networks can join reliably.【F:contrib/docker/README.md†L136-L158】
+   - Integrate authentication (OpenID Connect) and optional Matrix chat support as needed.【F:contrib/docker/README.md†L160-L192】
+   - Subscribe to security alerts by setting `SECURITY_EMAIL` in `.env` and monitor container updates regularly.
+
+By completing the steps above you will have a functional EC2-hosted WorkAdventure instance that can be upgraded by replacing the compose files with newer release versions and re-running `docker compose up -d --force-recreate` during maintenance windows.【F:contrib/docker/README.md†L172-L195】
+
 ## Setting up a development environment
 
 > [!NOTE]
